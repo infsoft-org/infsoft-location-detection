@@ -32,7 +32,7 @@ The host app remains responsible for requesting user permissions before initiali
 Use the public [Swift Package Index](https://swiftpackageindex.com/infsoft-org/infsoft-location-detection).
 The package repository points to the published binary framework and is updated with each SDK release.
 
-In Xcode, choose **File > Add Package Dependencies**, enter `https://github.com/infsoft-org/infsoft-location-detection.git`, and select version `1.0.0` or newer.
+In Xcode, choose **File > Add Package Dependencies**, enter `https://github.com/infsoft-org/infsoft-location-detection.git`, and select version `1.1.0` or newer.
 
 ## Usage
 
@@ -179,6 +179,43 @@ let sources = location.meta.positionSource
 - ``PositionSource/unknown``: No specific source was identified.
 
 The value is exposed as ``PositionSources``, a set of ``PositionSource`` values, because multiple sensors can contribute to a single calculated position.
+
+### Geofences
+
+Once geofences are set, the SDK sends to the positioning backend only while the device is inside one of them; outside
+of all of them it sends nothing and drops the readings collected there. Without fences everything is sent, as before.
+While nothing is sent - outside the fences or without a current fix - only GPS runs, to notice entering a fence;
+the AR camera, BLE, UWB, the barometer and the compass are off and start again once the device is inside.
+
+Whether the device is inside is decided on the device from the location fix of the platform's location service, so the
+fences need GPS enabled and the location permission (approximate location is enough). A fix counts as inside when the circle of its accuracy touches
+a fence; a fix less accurate than the maximum accuracy (1 km unless the app passes another to `setGeofences`) counts as
+if it were that accurate - an approximate fix kilometers off does not count as inside a fence kilometers away.
+
+The SDK fails closed: while fences are set and there is no current fix - none taken since location detection
+(re)started, or location detection paused - the status is unknown and nothing is sent. Without a maximum fix age (the
+default) the last fix counts until the next one, however old; pass one to `setGeofences` so that losing the location
+(turned off, permission revoked) stops sending too. Set the fences before initializing, so not even the first request goes out unchecked; they
+hold for every manager until they are changed. The callback runs on a background thread of the SDK, one event at a time
+and in order.
+
+To keep fixes jittering at a fence's edge from flipping sending and the collectors on and off, pass a switch delay to
+`setGeofences`: a change between inside and outside then takes effect only once the fixes have agreed with it for that
+long, and a fix on the old side cancels it. Meanwhile the old status holds - after leaving a fence the SDK keeps sending
+for up to the delay. It is off by default; a start, a pause, a lost fix and new fences still take effect at once.
+
+```swift
+UserLocationManager.setGeofenceHandler { event in
+    // event.status: .inside (sending), .outside or .unknown (not sending), .none (no fences, sending); event.fences: the fences the device is inside of
+}
+try UserLocationManager.setGeofences([
+    .circle(id: "home", center: GeoPoint(latitude: 49.0134, longitude: 12.1016)!, radiusInMeters: 150)!,
+])
+try UserLocationManager.setGeofences(fences, maxAccuracyInMeters: 500) // a fix counts with at most 500 m accuracy
+try UserLocationManager.setGeofences(fences, maxFixAge: 120) // no fix for 2 minutes: unknown, nothing is sent
+try UserLocationManager.setGeofences(fences, switchDelay: 30) // inside/outside must hold for 30 s
+try UserLocationManager.setGeofences([]) // removes them
+```
 
 ## Notes
 
